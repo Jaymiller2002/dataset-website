@@ -83,4 +83,4 @@ This project allows you to upload and visualize data files (including .mbox emai
 
 ## License
 
-Moved outside of frontend folder
+ignored ds store in everything
