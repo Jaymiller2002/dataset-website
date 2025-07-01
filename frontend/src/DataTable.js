@@ -1,0 +1,169 @@
+import React, { useState, useEffect } from 'react';
+import './DataTable.css';
+
+const DataTable = ({ data }) => {
+  const [filteredData, setFilteredData] = useState([]);
+  const [currentPage, setCurrentPage] = useState(1);
+  const [itemsPerPage] = useState(10);
+  const [viewMode, setViewMode] = useState('table'); // 'table' or 'bubble'
+
+  useEffect(() => {
+    if (data && data.length > 0) {
+      // Filter data to show only rows where all key fields are present
+      const keyFields = ['customer_name', 'rating', 'place', 'review_text', 'dates'];
+      const filtered = data.filter(row => {
+        return keyFields.every(field => {
+          const value = row[field];
+          return value !== null && value !== undefined && value !== '' && value.toString().trim() !== '';
+        });
+      });
+      setFilteredData(filtered);
+      setCurrentPage(1); // Reset to first page when data changes
+    } else {
+      setFilteredData([]);
+    }
+  }, [data]);
+
+  // Calculate pagination
+  const indexOfLastItem = currentPage * itemsPerPage;
+  const indexOfFirstItem = indexOfLastItem - itemsPerPage;
+  const currentItems = filteredData.slice(indexOfFirstItem, indexOfLastItem);
+  const totalPages = Math.ceil(filteredData.length / itemsPerPage);
+
+  const handlePageChange = (pageNumber) => {
+    setCurrentPage(pageNumber);
+  };
+
+  // Rating-based color functions
+  const getBubbleColor = (rating) => {
+    const num = parseInt(rating);
+    if (num >= 5) return '#4CAF50'; // Bright green for 5-star
+    if (num >= 4) return '#8BC34A'; // Light green for 4-star
+    if (num >= 3) return '#FFC107'; // Yellow for 3-star
+    if (num >= 2) return '#FF9800'; // Orange for 2-star
+    return '#F44336'; // Red for 1-star
+  };
+
+  const getBubbleTextColor = (rating) => {
+    const num = parseInt(rating);
+    return num >= 3 ? '#ffffff' : '#ffffff'; // White text for contrast
+  };
+
+  if (!data || data.length === 0) {
+    return <div className="no-data">No data available</div>;
+  }
+
+  if (filteredData.length === 0) {
+    return (
+      <div className="no-data">
+        <p>No rows found with all required fields (customer_name, rating, place, review_text, dates).</p>
+        <p>Showing {data.length} total rows, but none have complete information.</p>
+      </div>
+    );
+  }
+
+  // Get all columns except 'body'
+  const allColumns = Object.keys(currentItems[0] || {});
+  const columns = allColumns.filter(col => col !== 'body');
+
+  return (
+    <div className="data-table-container">
+      <div className="table-info">
+        <p>Showing {filteredData.length} rows with complete data (filtered from {data.length} total rows)</p>
+      </div>
+
+      {/* View Toggle Buttons */}
+      <div className="view-toggle">
+        <button 
+          className={`toggle-btn ${viewMode === 'table' ? 'active' : ''}`}
+          onClick={() => setViewMode('table')}
+        >
+          📊 Table View
+        </button>
+        <button 
+          className={`toggle-btn ${viewMode === 'bubble' ? 'active' : ''}`}
+          onClick={() => setViewMode('bubble')}
+        >
+          🫧 Bubble View
+        </button>
+      </div>
+      
+      {/* Conditional Rendering based on viewMode */}
+      {viewMode === 'table' ? (
+        <div className="table-wrapper">
+          <table className="data-table">
+            <thead>
+              <tr>
+                {columns.map((column) => (
+                  <th key={column}>{column}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {currentItems.map((row, index) => (
+                <tr key={index}>
+                  {columns.map((column) => (
+                    <td key={column}>
+                      {row[column] !== null && row[column] !== undefined 
+                        ? row[column].toString() 
+                        : ''}
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : (
+        <div className="bubble-grid">
+          {currentItems.map((row, index) => (
+            <div 
+              key={index} 
+              className="data-bubble"
+              style={{
+                backgroundColor: getBubbleColor(row.rating),
+                color: getBubbleTextColor(row.rating)
+              }}
+            >
+              <div className="bubble-header">
+                <h3>{row.customer_name}</h3>
+                <div className="rating-badge">{row.rating}⭐</div>
+              </div>
+              <div className="bubble-content">
+                <p><strong>Place:</strong> {row.place}</p>
+                <p><strong>Dates:</strong> {row.dates}</p>
+                <p><strong>Review:</strong> {row.review_text}</p>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {totalPages > 1 && (
+        <div className="pagination">
+          <button 
+            onClick={() => handlePageChange(currentPage - 1)}
+            disabled={currentPage === 1}
+            className="pagination-btn"
+          >
+            Previous
+          </button>
+          
+          <span className="page-info">
+            Page {currentPage} of {totalPages}
+          </span>
+          
+          <button 
+            onClick={() => handlePageChange(currentPage + 1)}
+            disabled={currentPage === totalPages}
+            className="pagination-btn"
+          >
+            Next
+          </button>
+        </div>
+      )}
+    </div>
+  );
+};
+
+export default DataTable; 

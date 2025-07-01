@@ -1,0 +1,529 @@
+import pandas as pd
+import os
+from typing import Optional, Union, Dict, Any
+import json
+import tkinter as tk
+from tkinter import filedialog, messagebox
+import sys
+import mailbox
+from flask import Flask, jsonify, request
+from flask_cors import CORS
+import tempfile
+import re
+
+print(pd.__version__)
+
+def select_file_gui(title: str = "Select a file to parse", 
+                   file_types: list = None) -> Optional[str]:
+    """
+    Open a GUI file dialog to select a file for parsing.
+    
+    Args:
+        title (str): Title for the file dialog window
+        file_types (list): List of tuples with file type descriptions and extensions
+                          e.g., [("CSV files", "*.csv"), ("Excel files", "*.xlsx")]
+    
+    Returns:
+        str or None: Selected file path or None if cancelled
+    """
+    if file_types is None:
+        file_types = [
+            ("All supported files", "*.csv;*.xlsx;*.xls;*.json;*.parquet;*.pkl;*.pickle;*.mbox"),
+            ("CSV files", "*.csv"),
+            ("Excel files", "*.xlsx;*.xls"),
+            ("JSON files", "*.json"),
+            ("Parquet files", "*.parquet"),
+            ("Pickle files", "*.pkl;*.pickle"),
+            ("MBOX files", "*.mbox"),
+            ("All files", "*.*")
+        ]
+    
+    # Create and hide the main tkinter window
+    root = tk.Tk()
+    root.withdraw()  # Hide the main window
+    
+    try:
+        file_path = filedialog.askopenfilename(
+            title=title,
+            filetypes=file_types
+        )
+        return file_path if file_path else None
+    except Exception as e:
+        print(f"Error opening file dialog: {e}")
+        return None
+    finally:
+        root.destroy()
+
+def select_multiple_files_gui(title: str = "Select files to parse",
+                            file_types: list = None) -> list:
+    """
+    Open a GUI file dialog to select multiple files for parsing.
+    
+    Args:
+        title (str): Title for the file dialog window
+        file_types (list): List of tuples with file type descriptions and extensions
+    
+    Returns:
+        list: List of selected file paths
+    """
+    if file_types is None:
+        file_types = [
+            ("All supported files", "*.csv;*.xlsx;*.xls;*.json;*.parquet;*.pkl;*.pickle;*.mbox"),
+            ("CSV files", "*.csv"),
+            ("Excel files", "*.xlsx;*.xls"),
+            ("JSON files", "*.json"),
+            ("Parquet files", "*.parquet"),
+            ("Pickle files", "*.pkl;*.pickle"),
+            ("MBOX files", "*.mbox"),
+            ("All files", "*.*")
+        ]
+    
+    # Create and hide the main tkinter window
+    root = tk.Tk()
+    root.withdraw()  # Hide the main window
+    
+    try:
+        file_paths = filedialog.askopenfilenames(
+            title=title,
+            filetypes=file_types
+        )
+        return list(file_paths) if file_paths else []
+    except Exception as e:
+        print(f"Error opening file dialog: {e}")
+        return []
+    finally:
+        root.destroy()
+
+def get_file_path_input() -> Optional[str]:
+    """
+    Get file path from user input via command line.
+    
+    Returns:
+        str or None: File path entered by user or None if cancelled
+    """
+    print("\nFile Upload Options:")
+    print("1. Enter file path manually")
+    print("2. Use GUI file dialog")
+    print("3. Cancel")
+    
+    while True:
+        choice = input("\nEnter your choice (1-3): ").strip()
+        
+        if choice == "1":
+            file_path = input("Enter the full path to your file: ").strip()
+            if file_path:
+                # Remove quotes if user included them
+                file_path = file_path.strip('"\'')
+                return file_path
+            else:
+                print("No file path entered.")
+                return None
+        
+        elif choice == "2":
+            return select_file_gui()
+        
+        elif choice == "3":
+            print("File selection cancelled.")
+            return None
+        
+        else:
+            print("Invalid choice. Please enter 1, 2, or 3.")
+
+def parse_data_with_upload(
+    use_gui: bool = True,
+    file_path: Optional[str] = None,
+    **kwargs
+) -> Optional[pd.DataFrame]:
+    """
+    Parse data with file upload functionality.
+    
+    Args:
+        use_gui (bool): Whether to use GUI file dialog (default: True)
+        file_path (str, optional): Direct file path (if provided, skips file selection)
+        **kwargs: Additional arguments for parse_data function
+    
+    Returns:
+        pd.DataFrame or None: Parsed data or None if no file selected
+    """
+    
+    # If file path is provided directly, use it
+    if file_path:
+        if os.path.exists(file_path):
+            return parse_data(file_path, **kwargs)
+        else:
+            print(f"File not found: {file_path}")
+            return None
+    
+    # Otherwise, get file path from user
+    if use_gui:
+        selected_file = select_file_gui()
+    else:
+        selected_file = get_file_path_input()
+    
+    if selected_file:
+        try:
+            return parse_data(selected_file, **kwargs)
+        except Exception as e:
+            print(f"Error parsing file: {e}")
+            return None
+    else:
+        print("No file selected.")
+        return None
+
+def parse_multiple_files_with_upload(
+    use_gui: bool = True,
+    file_paths: Optional[list] = None,
+    **kwargs
+) -> Dict[str, pd.DataFrame]:
+    """
+    Parse multiple files with upload functionality.
+    
+    Args:
+        use_gui (bool): Whether to use GUI file dialog
+        file_paths (list, optional): List of file paths (if provided, skips file selection)
+        **kwargs: Additional arguments for parse_data function
+    
+    Returns:
+        dict: Dictionary mapping file names to DataFrames
+    """
+    
+    # If file paths are provided directly, use them
+    if file_paths:
+        files_to_parse = file_paths
+    else:
+        # Get files from user
+        if use_gui:
+            files_to_parse = select_multiple_files_gui()
+        else:
+            print("Multiple file selection via command line not implemented yet.")
+            return {}
+    
+    results = {}
+    
+    for file_path in files_to_parse:
+        if os.path.exists(file_path):
+            try:
+                df = parse_data(file_path, **kwargs)
+                file_name = os.path.basename(file_path)
+                results[file_name] = df
+                print(f"Successfully parsed: {file_name}")
+            except Exception as e:
+                print(f"Error parsing {file_path}: {e}")
+        else:
+            print(f"File not found: {file_path}")
+    
+    return results
+
+def parse_data(
+    file_path: str,
+    file_type: Optional[str] = None,
+    encoding: str = 'utf-8',
+    **kwargs
+) -> pd.DataFrame:
+    """
+    Parse data from various file formats using pandas.
+    
+    Args:
+        file_path (str): Path to the data file
+        file_type (str, optional): Type of file ('csv', 'excel', 'json', 'parquet', 'pickle')
+                                  If None, will be inferred from file extension
+        encoding (str): File encoding (default: 'utf-8')
+        **kwargs: Additional arguments to pass to pandas read functions
+    
+    Returns:
+        pd.DataFrame: Parsed data as a pandas DataFrame
+        
+    Raises:
+        FileNotFoundError: If the file doesn't exist
+        ValueError: If file type is not supported
+        Exception: For other parsing errors
+    """
+    
+    # Check if file exists
+    if not os.path.exists(file_path):
+        raise FileNotFoundError(f"File not found: {file_path}")
+    
+    # Determine file type from extension if not provided
+    if file_type is None:
+        file_extension = os.path.splitext(file_path)[1].lower()
+        file_type_map = {
+            '.csv': 'csv',
+            '.xlsx': 'excel',
+            '.xls': 'excel',
+            '.json': 'json',
+            '.parquet': 'parquet',
+            '.pkl': 'pickle',
+            '.pickle': 'pickle'
+        }
+        file_type = file_type_map.get(file_extension, 'csv')
+    
+    try:
+        if file_type.lower() == 'csv':
+            return pd.read_csv(file_path, encoding=encoding, **kwargs)
+        
+        elif file_type.lower() == 'excel':
+            return pd.read_excel(file_path, **kwargs)
+        
+        elif file_type.lower() == 'json':
+            return pd.read_json(file_path, encoding=encoding, **kwargs)
+        
+        elif file_type.lower() == 'parquet':
+            return pd.read_parquet(file_path, **kwargs)
+        
+        elif file_type.lower() == 'pickle':
+            return pd.read_pickle(file_path, **kwargs)
+        
+        else:
+            raise ValueError(f"Unsupported file type: {file_type}")
+    
+    except Exception as e:
+        raise Exception(f"Error parsing file {file_path}: {str(e)}")
+
+def parse_data_with_validation(
+    file_path: str,
+    required_columns: Optional[list] = None,
+    data_types: Optional[Dict[str, str]] = None,
+    drop_duplicates: bool = True,
+    handle_missing: str = 'drop',  # 'drop', 'fill', 'interpolate'
+    fill_value: Any = None,
+    **kwargs
+) -> pd.DataFrame:
+    """
+    Parse data with validation and cleaning options.
+    
+    Args:
+        file_path (str): Path to the data file
+        required_columns (list, optional): List of required column names
+        data_types (dict, optional): Dictionary mapping column names to expected data types
+        drop_duplicates (bool): Whether to drop duplicate rows
+        handle_missing (str): How to handle missing values ('drop', 'fill', 'interpolate')
+        fill_value: Value to fill missing data with (if handle_missing='fill')
+        **kwargs: Additional arguments for parse_data function
+    
+    Returns:
+        pd.DataFrame: Cleaned and validated DataFrame
+    """
+    
+    # Parse the data
+    df = parse_data(file_path, **kwargs)
+    
+    # Validate required columns
+    if required_columns:
+        missing_cols = [col for col in required_columns if col not in df.columns]
+        if missing_cols:
+            raise ValueError(f"Missing required columns: {missing_cols}")
+    
+    # Convert data types if specified
+    if data_types:
+        for col, dtype in data_types.items():
+            if col in df.columns:
+                try:
+                    df[col] = df[col].astype(dtype)
+                except Exception as e:
+                    print(f"Warning: Could not convert column {col} to {dtype}: {e}")
+    
+    # Handle missing values
+    if handle_missing == 'drop':
+        df = df.dropna()
+    elif handle_missing == 'fill':
+        df = df.fillna(fill_value)
+    elif handle_missing == 'interpolate':
+        df = df.interpolate()
+    
+    # Drop duplicates if requested
+    if drop_duplicates:
+        df = df.drop_duplicates()
+    
+    return df
+
+def get_data_info(df: pd.DataFrame) -> Dict[str, Any]:
+    """
+    Get comprehensive information about a DataFrame.
+    
+    Args:
+        df (pd.DataFrame): Input DataFrame
+    
+    Returns:
+        dict: Dictionary containing data information
+    """
+    info = {
+        'shape': df.shape,
+        'columns': list(df.columns),
+        'data_types': df.dtypes.to_dict(),
+        'missing_values': df.isnull().sum().to_dict(),
+        'memory_usage': df.memory_usage(deep=True).sum(),
+        'numeric_columns': list(df.select_dtypes(include=['number']).columns),
+        'categorical_columns': list(df.select_dtypes(include=['object', 'category']).columns),
+        'datetime_columns': list(df.select_dtypes(include=['datetime']).columns)
+    }
+    
+    # Add basic statistics for numeric columns
+    if info['numeric_columns']:
+        info['numeric_stats'] = df[info['numeric_columns']].describe().to_dict()
+    
+    return info
+
+def parse_mbox(file_path):
+    mbox = mailbox.mbox(file_path)
+    records = []
+    for msg in mbox:
+        subject = msg['subject']
+        from_ = msg['from']
+        to = msg['to']
+        date = msg['date']
+        # Get the email body (handle multipart)
+        if msg.is_multipart():
+            body = ''
+            for part in msg.walk():
+                if part.get_content_type() == 'text/plain':
+                    try:
+                        body += part.get_payload(decode=True).decode(part.get_content_charset() or 'utf-8', errors='replace')
+                    except Exception:
+                        body += str(part.get_payload())
+        else:
+            try:
+                body = msg.get_payload(decode=True).decode(msg.get_content_charset() or 'utf-8', errors='replace')
+            except Exception:
+                body = str(msg.get_payload())
+        records.append({'subject': subject, 'from': from_, 'to': to, 'date': date, 'body': body})
+    return pd.DataFrame(records)
+
+def extract_customer_info(subject, body):
+    """Extract customer name, rating, place, review text, messages sent, and dates from email content."""
+    info = {
+        'customer_name': None,
+        'rating': None,
+        'place': None,
+        'review_text': None,
+        'dates': None,
+        'message_sent': None
+    }
+    # Extract customer name from subject
+    name_match = re.search(r'(\w+)\s+wrote\s+you\s+a\s+review', subject or '', re.IGNORECASE)
+    if name_match:
+        info['customer_name'] = name_match.group(1)
+    else:
+        # Try another pattern (e.g., "Kati left a 5-star review!")
+        name_match2 = re.search(r'(\w+)\s+left\s+a\s+\d+-star\s+review', subject or '', re.IGNORECASE)
+        if name_match2:
+            info['customer_name'] = name_match2.group(1)
+    # Extract rating (e.g., "5-star review" or "RATED THEIR STAY 5 STARS")
+    rating_match = re.search(r'(\d+)-star\s+review', body or '', re.IGNORECASE)
+    if rating_match:
+        info['rating'] = rating_match.group(1)
+    else:
+        rating_match2 = re.search(r'RATED THEIR STAY (\d+) STARS', body or '', re.IGNORECASE)
+        if rating_match2:
+            info['rating'] = rating_match2.group(1)
+    # Extract place name (in quotes)
+    place_match = re.search(r'"([^"]+)"', body or '')
+    if place_match:
+        info['place'] = place_match.group(1)
+    # Extract review text from a variety of patterns
+    review_patterns = [
+        r'OVERALL RATING\s*\d+\s*\n([^\n]+)',   # review on next line after rating
+        r'OVERALL RATING \d+\s*([^\n]+)',       # review on same line
+        r'(?<=\n\n)[^"\n]{5,}\n*$',             # last paragraph (if it's not quoted, fallback)
+        r'review(?:\s*text)?[:\-\s]+"?([^\n"]+)"?',  # e.g., Review: "Great place!"
+        r'comment[:\-\s]+"?([^\n"]+)"?',             # e.g., Comment: "Nice host"
+        r'(?:review|feedback|comment)[^\n]*\n([^\n]{10,})', # text after keyword
+        r'FEEDBACK FROM THEIR STAY.*?"([^"]+)"',  # fallback: property name, not review
+        r'"([^"]{10,})"',                        # any quoted text longer than 10 chars
+    ]
+    review_text = None
+    for pat in review_patterns:
+        match = re.search(pat, body or '', re.IGNORECASE | re.DOTALL)
+        if match:
+            review_text = match.group(1).strip()
+            break
+    info['review_text'] = review_text
+    # Extract the first paragraph or main block of text as the message
+    def extract_main_message(body):
+        if not body:
+            return None
+        paragraphs = [p.strip() for p in body.split('\n\n') if p.strip()]
+        if paragraphs:
+            for para in paragraphs:
+                if not para.lower().startswith((
+                    'best,', 'thanks,', 'regards,', 'sent from', 'on ', 'from:', '--', 'cheers', 'sincerely', 'yours', 'thank you', 'kind regards', 'warm regards', 'with appreciation', 'with gratitude', 'respectfully', 'faithfully', 'truly', 'appreciatively', 'cordially', 'love', 'take care', 'see you', 'goodbye', 'bye', 'ps', 'p.s.'
+                )) and len(para) > 10:
+                    return para
+            return paragraphs[0]  # fallback: first paragraph
+        return None
+    info['message_sent'] = extract_main_message(body)
+    # Extract dates (e.g., "Jun 10 – 12" or "Jun 13 – 14, 2025")
+    date_match = re.search(r'(\w+\s+\d+\s*[–-]\s*\d+(?:,\s*\d{4})?)', body or '')
+    if date_match:
+        info['dates'] = date_match.group(1)
+    return info
+
+def enhance_mbox_data(df):
+    """Add extracted customer information to the DataFrame."""
+    df['customer_name'] = None
+    df['rating'] = None
+    df['place'] = None
+    df['review_text'] = None
+    df['dates'] = None
+    df['message_sent'] = None
+    for idx, row in df.iterrows():
+        info = extract_customer_info(row.get('subject', ''), row.get('body', ''))
+        df.at[idx, 'customer_name'] = info['customer_name']
+        df.at[idx, 'rating'] = info['rating']
+        df.at[idx, 'place'] = info['place']
+        df.at[idx, 'review_text'] = info['review_text']
+        df.at[idx, 'dates'] = info['dates']
+        df.at[idx, 'message_sent'] = info['message_sent']
+    return df
+
+# --- Flask API for React frontend ---
+app = Flask(__name__)
+CORS(app)
+
+@app.route('/api/data', methods=['GET'])
+def api_data():
+    file_path = request.args.get('file')
+    if not file_path:
+        return jsonify({'error': 'No file path provided. Use ?file=yourfile.csv'}), 400
+    if not os.path.exists(file_path):
+        return jsonify({'error': f'File not found: {file_path}'}), 404
+    try:
+        if file_path.lower().endswith('.mbox'):
+            df = parse_mbox(file_path)
+        else:
+            df = parse_data(file_path)
+        columns_of_interest = ['from', 'to', 'subject', 'date', 'body', 'customer_name', 'review', 'message', 'rating', 'place']
+        available = [col for col in columns_of_interest if col in df.columns]
+        if available:
+            df = df[available]
+        return df.to_json(orient='records')
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/upload', methods=['POST'])
+def upload_file():
+    if 'file' not in request.files:
+        return jsonify({'error': 'No file part'}), 400
+    file = request.files['file']
+    if file.filename == '':
+        return jsonify({'error': 'No selected file'}), 400
+    with tempfile.NamedTemporaryFile(delete=False) as tmp:
+        file.save(tmp.name)
+        tmp_path = tmp.name
+    try:
+        if file.filename.lower().endswith('.mbox'):
+            df = parse_mbox(tmp_path)
+            df = enhance_mbox_data(df)
+        else:
+            df = parse_data(tmp_path)
+        columns_of_interest = ['from', 'to', 'subject', 'date', 'body', 'customer_name', 'review', 'message', 'rating', 'place', 'review_text', 'dates']
+        available = [col for col in columns_of_interest if col in df.columns]
+        if available:
+            df = df[available]
+        return df.to_json(orient='records')
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+    finally:
+        os.remove(tmp_path)
+
+if __name__ == "__main__":
+    app.run(debug=True)
