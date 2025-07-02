@@ -64,7 +64,7 @@ const DataTable = ({ data }) => {
 
   // Get all columns except 'body'
   const allColumns = Object.keys(currentItems[0] || {});
-  const columns = allColumns.filter(col => col !== 'body');
+  const columns = allColumns.filter(col => col !== 'body' && col !== 'review_text');
 
   return (
     <div className="data-table-container">
@@ -104,9 +104,20 @@ const DataTable = ({ data }) => {
                 <tr key={index}>
                   {columns.map((column) => (
                     <td key={column}>
-                      {row[column] !== null && row[column] !== undefined 
-                        ? row[column].toString() 
-                        : ''}
+                      {column === 'review_link' && row[column] 
+                        ? (
+                            <a 
+                              href={row[column]} 
+                              target="_blank" 
+                              rel="noopener noreferrer"
+                              className="review-link-btn"
+                            >
+                              View Review
+                            </a>
+                          )
+                        : (row[column] !== null && row[column] !== undefined 
+                            ? row[column].toString() 
+                            : '')}
                     </td>
                   ))}
                 </tr>
@@ -132,7 +143,19 @@ const DataTable = ({ data }) => {
               <div className="bubble-content">
                 <p><strong>Place:</strong> {row.place}</p>
                 <p><strong>Dates:</strong> {row.dates}</p>
-                <p><strong>Review:</strong> {row.review_text}</p>
+                {row.review_link ? (
+                  <p>
+                    <strong>Review Link:</strong>{' '}
+                    <a 
+                      href={row.review_link} 
+                      target="_blank" 
+                      rel="noopener noreferrer"
+                      className="review-link-btn"
+                    >
+                      View Review
+                    </a>
+                  </p>
+                ) : null}
               </div>
             </div>
           ))}
