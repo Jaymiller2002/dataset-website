@@ -389,14 +389,15 @@ def parse_mbox(file_path):
     return pd.DataFrame(records)
 
 def extract_customer_info(subject, body):
-    """Extract customer name, rating, place, review text, messages sent, and dates from email content."""
+    """Extract customer name, rating, place, review text, messages sent, dates, and review link from email content."""
     info = {
         'customer_name': None,
         'rating': None,
         'place': None,
         'review_text': None,
         'dates': None,
-        'message_sent': None
+        'message_sent': None,
+        'review_link': None
     }
     # Extract customer name from subject
     name_match = re.search(r'(\w+)\s+wrote\s+you\s+a\s+review', subject or '', re.IGNORECASE)
@@ -421,21 +422,50 @@ def extract_customer_info(subject, body):
         info['place'] = place_match.group(1)
     # Extract review text from a variety of patterns
     review_patterns = [
+        r'Booker\s*(?:=20)?\s*\n+([\s\S]+)',  # Fully greedy, capture everything after Booker
         r'OVERALL RATING\s*\d+\s*\n([^\n]+)',   # review on next line after rating
         r'OVERALL RATING \d+\s*([^\n]+)',       # review on same line
         r'(?<=\n\n)[^"\n]{5,}\n*$',             # last paragraph (if it's not quoted, fallback)
         r'review(?:\s*text)?[:\-\s]+"?([^\n"]+)"?',  # e.g., Review: "Great place!"
         r'comment[:\-\s]+"?([^\n"]+)"?',             # e.g., Comment: "Nice host"
         r'(?:review|feedback|comment)[^\n]*\n([^\n]{10,})', # text after keyword
-        r'FEEDBACK FROM THEIR STAY.*?"([^"]+)"',  # fallback: property name, not review
-        r'"([^"]{10,})"',                        # any quoted text longer than 10 chars
+        r'FEEDBACK FROM THEIR STAY.*?"([^\"]+)"',  # fallback: property name, not review
+        r'"([^\"]{10,})"',                        # any quoted text longer than 10 chars
     ]
     review_text = None
     for pat in review_patterns:
         match = re.search(pat, body or '', re.IGNORECASE | re.DOTALL)
         if match:
-            review_text = match.group(1).strip()
+            review_block = match.group(1).strip()
+            # Split into lines
+            lines = [line.strip() for line in review_block.splitlines()]
+            # Skip empty lines and lines that are just '=20'
+            review_lines = []
+            started = False
+            for line in lines:
+                if not started:
+                    if line and line != '=20':
+                        started = True
+                        review_lines.append(line)
+                else:
+                    if not line or line == '=20':
+                        break  # Stop at first blank or encoding line after review starts
+                    review_lines.append(line)
+            review_text = ' '.join(review_lines).strip()
+            # Remove translation note if present
+            if 'Automatically translated from original message' in review_text:
+                review_text = review_text.split('Automatically translated from original message')[0].strip()
             break
+    # Fallback: largest quoted text
+    if not review_text:
+        quoted_texts = re.findall(r'"([^"]{10,})"', body or '', re.DOTALL)
+        if quoted_texts:
+            review_text = max(quoted_texts, key=len)
+    # Fallback: largest paragraph
+    if not review_text and body:
+        paragraphs = [p.strip() for p in (body or '').split('\n\n') if len(p.strip()) > 10]
+        if paragraphs:
+            review_text = max(paragraphs, key=len)
     info['review_text'] = review_text
     # Extract the first paragraph or main block of text as the message
     def extract_main_message(body):
@@ -455,6 +485,17 @@ def extract_customer_info(subject, body):
     date_match = re.search(r'(\w+\s+\d+\s*[–-]\s*\d+(?:,\s*\d{4})?)', body or '')
     if date_match:
         info['dates'] = date_match.group(1)
+    # Extract review link (prefer links containing 'review' or 'reviews')
+    urls = re.findall(r'https?://\S+', body or '')
+    review_link = None
+    if urls:
+        for url in urls:
+            if 'review' in url.lower():
+                review_link = url
+                break
+        if not review_link:
+            review_link = urls[0]  # fallback to first URL
+    info['review_link'] = review_link
     return info
 
 def enhance_mbox_data(df):
@@ -465,6 +506,7 @@ def enhance_mbox_data(df):
     df['review_text'] = None
     df['dates'] = None
     df['message_sent'] = None
+    df['review_link'] = None
     for idx, row in df.iterrows():
         info = extract_customer_info(row.get('subject', ''), row.get('body', ''))
         df.at[idx, 'customer_name'] = info['customer_name']
@@ -473,6 +515,7 @@ def enhance_mbox_data(df):
         df.at[idx, 'review_text'] = info['review_text']
         df.at[idx, 'dates'] = info['dates']
         df.at[idx, 'message_sent'] = info['message_sent']
+        df.at[idx, 'review_link'] = info['review_link']
     return df
 
 # --- Flask API for React frontend ---
@@ -491,7 +534,7 @@ def api_data():
             df = parse_mbox(file_path)
         else:
             df = parse_data(file_path)
-        columns_of_interest = ['from', 'to', 'subject', 'date', 'body', 'customer_name', 'review', 'message', 'rating', 'place']
+        columns_of_interest = ['from', 'to', 'subject', 'date', 'body', 'customer_name', 'review', 'message', 'rating', 'place', 'review_text', 'review_link', 'dates']
         available = [col for col in columns_of_interest if col in df.columns]
         if available:
             df = df[available]
@@ -515,7 +558,7 @@ def upload_file():
             df = enhance_mbox_data(df)
         else:
             df = parse_data(tmp_path)
-        columns_of_interest = ['from', 'to', 'subject', 'date', 'body', 'customer_name', 'review', 'message', 'rating', 'place', 'review_text', 'dates']
+        columns_of_interest = ['from', 'to', 'subject', 'date', 'body', 'customer_name', 'review', 'message', 'rating', 'place', 'review_text', 'review_link', 'dates']
         available = [col for col in columns_of_interest if col in df.columns]
         if available:
             df = df[available]
