@@ -3,9 +3,10 @@ import './DataTable.css';
 
 const DataTable = ({ data }) => {
   const [filteredData, setFilteredData] = useState([]);
-  const [currentPage, setCurrentPage] = useState(1);
+  const [currentPage, setCurrentPage] = useState(() => Number(localStorage.getItem('currentPage')) || 1);
   const [itemsPerPage] = useState(10);
-  const [viewMode, setViewMode] = useState('table'); // 'table' or 'bubble'
+  const [viewMode, setViewMode] = useState(() => localStorage.getItem('viewMode') || 'table'); // 'table', 'bubble', or 'grouped'
+  const [showOnlyPositiveWithSuggestion, setShowOnlyPositiveWithSuggestion] = useState(() => localStorage.getItem('showOnlyPositiveWithSuggestion') === 'true');
 
   useEffect(() => {
     if (data && data.length > 0) {
@@ -49,6 +50,44 @@ const DataTable = ({ data }) => {
     return num >= 3 ? '#ffffff' : '#ffffff'; // White text for contrast
   };
 
+  // Group reviews by customer_name
+  const reviewsByCustomer = data.reduce((acc, row) => {
+    const name = row.customer_name || 'Unknown';
+    if (!acc[name]) acc[name] = [];
+    acc[name].push(row);
+    return acc;
+  }, {});
+
+  function isReviewByCustomer(review) {
+    const link = (review.review_link || '').toLowerCase();
+    // Exclude if the link contains '/hosting/reviews/' and '/edit'
+    if (link.includes('/hosting/reviews/') && link.includes('/edit')) {
+      return false;
+    }
+    return true;
+  }
+
+  useEffect(() => {
+    // Warn before reload/leave
+    const handleBeforeUnload = (e) => {
+      e.preventDefault();
+      e.returnValue = '';
+    };
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, []);
+
+  // Persist state to localStorage
+  useEffect(() => {
+    localStorage.setItem('viewMode', viewMode);
+  }, [viewMode]);
+  useEffect(() => {
+    localStorage.setItem('currentPage', currentPage);
+  }, [currentPage]);
+  useEffect(() => {
+    localStorage.setItem('showOnlyPositiveWithSuggestion', showOnlyPositiveWithSuggestion);
+  }, [showOnlyPositiveWithSuggestion]);
+
   if (!data || data.length === 0) {
     return <div className="no-data">No data available</div>;
   }
@@ -86,10 +125,59 @@ const DataTable = ({ data }) => {
         >
           🫧 Bubble View
         </button>
+        <button 
+          className={`toggle-btn ${viewMode === 'grouped' ? 'active' : ''}`}
+          onClick={() => setViewMode('grouped')}
+        >
+          👥 Grouped by Customer
+        </button>
       </div>
       
       {/* Conditional Rendering based on viewMode */}
-      {viewMode === 'table' ? (
+      {viewMode === 'grouped' ? (
+        <div className="grouped-reviews">
+          {Object.entries(reviewsByCustomer)
+            .filter(([customer]) => customer !== 'Unknown')
+            .map(([customer, reviews]) => (
+              <div key={customer} className="customer-group">
+                <h3>{customer} ({reviews.filter(isReviewByCustomer).length} review{reviews.length > 1 ? 's' : ''})</h3>
+                <ul>
+                  {reviews
+                    .filter(isReviewByCustomer)
+                    .map((review, idx) => (
+                      <li key={idx}>
+                        {review.review_link ? (
+                          <a 
+                            href={review.review_link} 
+                            target="_blank" 
+                            rel="noopener noreferrer"
+                            className="review-link-btn"
+                          >
+                            View Review
+                          </a>
+                        ) : <i>No review link</i>}
+                        {review.rating && (
+                          <span style={{ marginLeft: 8 }}>
+                            <strong>Rating:</strong> {review.rating}⭐
+                          </span>
+                        )}
+                        {review.place && (
+                          <span style={{ marginLeft: 8 }}>
+                            <strong>Place:</strong> {review.place}
+                          </span>
+                        )}
+                        {review.dates && (
+                          <span style={{ marginLeft: 8 }}>
+                            <strong>Dates:</strong> {review.dates}
+                          </span>
+                        )}
+                      </li>
+                    ))}
+                </ul>
+              </div>
+            ))}
+        </div>
+      ) : viewMode === 'table' ? (
         <div className="table-wrapper">
           <table className="data-table">
             <thead>
@@ -162,7 +250,7 @@ const DataTable = ({ data }) => {
         </div>
       )}
 
-      {totalPages > 1 && (
+      {viewMode !== 'grouped' && totalPages > 1 && (
         <div className="pagination">
           <button 
             onClick={() => handlePageChange(currentPage - 1)}
