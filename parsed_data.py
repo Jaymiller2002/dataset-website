@@ -10,6 +10,7 @@ from flask import Flask, jsonify, request
 from flask_cors import CORS
 import tempfile
 import re
+import yake
 
 print(pd.__version__)
 
@@ -518,6 +519,32 @@ def enhance_mbox_data(df):
         df.at[idx, 'review_link'] = info['review_link']
     return df
 
+def extract_global_keywords(df, text_column='body', lan='en', n=2, top=20):
+    """
+    Extract most common keywords/phrases from a DataFrame column using YAKE.
+    Args:
+        df: pandas DataFrame
+        text_column: column name with text to analyze
+        lan: language code (default 'en')
+        n: max n-gram size (1=words, 2=2-word phrases, etc.)
+        top: number of keywords/phrases to return
+    Returns:
+        List of (keyword, score) tuples
+    """
+    all_text = ' '.join(df[text_column].dropna().astype(str))
+    kw_extractor = yake.KeywordExtractor(lan=lan, n=n, top=top)
+    keywords = kw_extractor.extract_keywords(all_text)
+    return keywords
+
+def extract_keywords_per_review(df, text_column='body', lan='en', n=2, top=5):
+    kw_extractor = yake.KeywordExtractor(lan=lan, n=n, top=top)
+    def extract(text):
+        if not text or not isinstance(text, str):
+            return []
+        return [kw for kw, score in kw_extractor.extract_keywords(text)]
+    df['keywords'] = df[text_column].apply(extract)
+    return df
+
 # --- Flask API for React frontend ---
 app = Flask(__name__)
 CORS(app)
@@ -532,9 +559,41 @@ def api_data():
     try:
         if file_path.lower().endswith('.mbox'):
             df = parse_mbox(file_path)
+            df = enhance_mbox_data(df)
+            df = extract_keywords_per_review(df, text_column='review_text')
         else:
             df = parse_data(file_path)
-        columns_of_interest = ['from', 'to', 'subject', 'date', 'body', 'customer_name', 'review', 'message', 'rating', 'place', 'review_text', 'review_link', 'dates']
+            df = extract_keywords_per_review(df, text_column='body')
+        # Improved has_suggestion logic
+        import re
+        def has_suggestion(row):
+            try:
+                rating = float(row.get('rating', 0))
+            except Exception:
+                rating = 0
+            text = (row.get('review_text') or row.get('body') or '').lower()
+            if rating >= 4:
+                # Exclude negations
+                if re.search(r'no (issues?|problems?)', text):
+                    return False
+                # Look for more specific suggestion patterns
+                suggestion_patterns = [
+                    r'\bwish\b',
+                    r'\bit would be better if\b',
+                    r'\bit would help if\b',
+                    r'\bif only\b',
+                    r'\bexcept that\b',
+                    r'\bbut\b.*(could|should|would|wasn\'t|isn\'t|not|problem|issue|improve|change)',
+                    r'\bhowever\b.*(could|should|would|wasn\'t|isn\'t|not|problem|issue|improve|change)',
+                    # Only match recommend if followed by 'that', 'to', 'you', or a verb
+                    r'\brecommend (that|to|you|adding|changing|improving|fixing|making|doing|considering|trying)\b',
+                ]
+                for pat in suggestion_patterns:
+                    if re.search(pat, text):
+                        return True
+            return False
+        df['has_suggestion'] = df.apply(has_suggestion, axis=1)
+        columns_of_interest = ['from', 'to', 'subject', 'date', 'body', 'customer_name', 'review', 'message', 'rating', 'place', 'review_text', 'review_link', 'dates', 'keywords', 'has_suggestion']
         available = [col for col in columns_of_interest if col in df.columns]
         if available:
             df = df[available]
@@ -556,9 +615,40 @@ def upload_file():
         if file.filename.lower().endswith('.mbox'):
             df = parse_mbox(tmp_path)
             df = enhance_mbox_data(df)
+            df = extract_keywords_per_review(df, text_column='review_text')
         else:
             df = parse_data(tmp_path)
-        columns_of_interest = ['from', 'to', 'subject', 'date', 'body', 'customer_name', 'review', 'message', 'rating', 'place', 'review_text', 'review_link', 'dates']
+            df = extract_keywords_per_review(df, text_column='body')
+        # Improved has_suggestion logic
+        import re
+        def has_suggestion(row):
+            try:
+                rating = float(row.get('rating', 0))
+            except Exception:
+                rating = 0
+            text = (row.get('review_text') or row.get('body') or '').lower()
+            if rating >= 4:
+                # Exclude negations
+                if re.search(r'no (issues?|problems?)', text):
+                    return False
+                # Look for more specific suggestion patterns
+                suggestion_patterns = [
+                    r'\bwish\b',
+                    r'\bit would be better if\b',
+                    r'\bit would help if\b',
+                    r'\bif only\b',
+                    r'\bexcept that\b',
+                    r'\bbut\b.*(could|should|would|wasn\'t|isn\'t|not|problem|issue|improve|change)',
+                    r'\bhowever\b.*(could|should|would|wasn\'t|isn\'t|not|problem|issue|improve|change)',
+                    # Only match recommend if followed by 'that', 'to', 'you', or a verb
+                    r'\brecommend (that|to|you|adding|changing|improving|fixing|making|doing|considering|trying)\b',
+                ]
+                for pat in suggestion_patterns:
+                    if re.search(pat, text):
+                        return True
+            return False
+        df['has_suggestion'] = df.apply(has_suggestion, axis=1)
+        columns_of_interest = ['from', 'to', 'subject', 'date', 'body', 'customer_name', 'review', 'message', 'rating', 'place', 'review_text', 'review_link', 'dates', 'keywords', 'has_suggestion']
         available = [col for col in columns_of_interest if col in df.columns]
         if available:
             df = df[available]

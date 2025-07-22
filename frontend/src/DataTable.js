@@ -10,9 +10,11 @@ const DataTable = ({ data }) => {
 
   useEffect(() => {
     if (data && data.length > 0) {
+      // Sort: has_suggestion true first
+      const sorted = [...data].sort((a, b) => (b.has_suggestion === true) - (a.has_suggestion === true));
       // Filter data to show only rows where all key fields are present
       const keyFields = ['customer_name', 'rating', 'place', 'review_text', 'dates'];
-      const filtered = data.filter(row => {
+      const filtered = sorted.filter(row => {
         return keyFields.every(field => {
           const value = row[field];
           return value !== null && value !== undefined && value !== '' && value.toString().trim() !== '';
@@ -28,7 +30,9 @@ const DataTable = ({ data }) => {
   // Calculate pagination
   const indexOfLastItem = currentPage * itemsPerPage;
   const indexOfFirstItem = indexOfLastItem - itemsPerPage;
-  const currentItems = filteredData.slice(indexOfFirstItem, indexOfLastItem);
+  // Sort filteredData so that has_suggestion true comes first, then paginate
+  const sortedFilteredData = [...filteredData].sort((a, b) => (b.has_suggestion === true) - (a.has_suggestion === true));
+  const currentItems = sortedFilteredData.slice(indexOfFirstItem, indexOfLastItem);
   const totalPages = Math.ceil(filteredData.length / itemsPerPage);
 
   const handlePageChange = (pageNumber) => {
@@ -101,9 +105,17 @@ const DataTable = ({ data }) => {
     );
   }
 
-  // Get all columns except 'body'
-  const allColumns = Object.keys(currentItems[0] || {});
-  const columns = allColumns.filter(col => col !== 'body' && col !== 'review_text');
+  // Only show these columns/fields in all views
+  const displayColumns = [
+    'subject',
+    'date',
+    'customer_name',
+    'rating',
+    'place',
+    'review_link',
+    'dates',
+    'has_suggestion',
+  ];
 
   return (
     <div className="data-table-container">
@@ -146,31 +158,35 @@ const DataTable = ({ data }) => {
                     .filter(isReviewByCustomer)
                     .map((review, idx) => (
                       <li key={idx}>
-                        {review.review_link ? (
-                          <a 
-                            href={review.review_link} 
-                            target="_blank" 
-                            rel="noopener noreferrer"
-                            className="review-link-btn"
-                          >
-                            View Review
-                          </a>
-                        ) : <i>No review link</i>}
-                        {review.rating && (
-                          <span style={{ marginLeft: 8 }}>
-                            <strong>Rating:</strong> {review.rating}⭐
-                          </span>
-                        )}
-                        {review.place && (
-                          <span style={{ marginLeft: 8 }}>
-                            <strong>Place:</strong> {review.place}
-                          </span>
-                        )}
-                        {review.dates && (
-                          <span style={{ marginLeft: 8 }}>
-                            <strong>Dates:</strong> {review.dates}
-                          </span>
-                        )}
+                        {displayColumns.map((column) => {
+                          if (column === 'customer_name') return null; // Already shown as group header
+                          if (column === 'review_link' && review[column]) {
+                            return (
+                              <span key={column} style={{ marginLeft: 8 }}>
+                                <a 
+                                  href={review[column]} 
+                                  target="_blank" 
+                                  rel="noopener noreferrer"
+                                  className="review-link-btn"
+                                >
+                                  View Review
+                                </a>
+                              </span>
+                            );
+                          }
+                          if (column === 'has_suggestion') {
+                            return (
+                              <span key={column} style={{ marginLeft: 8 }}>
+                                <strong>Has Suggestion:</strong> {review[column] ? 'Yes' : 'No'}
+                              </span>
+                            );
+                          }
+                          return review[column] ? (
+                            <span key={column} style={{ marginLeft: 8 }}>
+                              <strong>{column.charAt(0).toUpperCase() + column.slice(1)}:</strong> {review[column]}
+                            </span>
+                          ) : null;
+                        })}
                       </li>
                     ))}
                 </ul>
@@ -182,7 +198,7 @@ const DataTable = ({ data }) => {
           <table className="data-table">
             <thead>
               <tr>
-                {columns.map((column) => (
+                {displayColumns.map((column) => (
                   <th key={column}>{column}</th>
                 ))}
               </tr>
@@ -190,7 +206,7 @@ const DataTable = ({ data }) => {
             <tbody>
               {currentItems.map((row, index) => (
                 <tr key={index}>
-                  {columns.map((column) => (
+                  {displayColumns.map((column) => (
                     <td key={column}>
                       {column === 'review_link' && row[column] 
                         ? (
@@ -203,9 +219,11 @@ const DataTable = ({ data }) => {
                               View Review
                             </a>
                           )
-                        : (row[column] !== null && row[column] !== undefined 
-                            ? row[column].toString() 
-                            : '')}
+                        : column === 'has_suggestion'
+                          ? (row[column] ? 'Yes' : 'No')
+                          : (row[column] !== null && row[column] !== undefined 
+                              ? row[column].toString() 
+                              : '')}
                     </td>
                   ))}
                 </tr>
@@ -229,21 +247,32 @@ const DataTable = ({ data }) => {
                 <div className="rating-badge">{row.rating}⭐</div>
               </div>
               <div className="bubble-content">
-                <p><strong>Place:</strong> {row.place}</p>
-                <p><strong>Dates:</strong> {row.dates}</p>
-                {row.review_link ? (
-                  <p>
-                    <strong>Review Link:</strong>{' '}
-                    <a 
-                      href={row.review_link} 
-                      target="_blank" 
-                      rel="noopener noreferrer"
-                      className="review-link-btn"
-                    >
-                      View Review
-                    </a>
-                  </p>
-                ) : null}
+                {displayColumns.map((column) => {
+                  if (column === 'customer_name' || column === 'rating') return null; // Already shown in header
+                  if (column === 'review_link' && row[column]) {
+                    return (
+                      <p key={column}>
+                        <strong>Review Link:</strong>{' '}
+                        <a 
+                          href={row[column]} 
+                          target="_blank" 
+                          rel="noopener noreferrer"
+                          className="review-link-btn"
+                        >
+                          View Review
+                        </a>
+                      </p>
+                    );
+                  }
+                  if (column === 'has_suggestion') {
+                    return (
+                      <p key={column}><strong>Has Suggestion:</strong> {row[column] ? 'Yes' : 'No'}</p>
+                    );
+                  }
+                  return row[column] ? (
+                    <p key={column}><strong>{column.charAt(0).toUpperCase() + column.slice(1)}:</strong> {row[column]}</p>
+                  ) : null;
+                })}
               </div>
             </div>
           ))}
