@@ -1,36 +1,76 @@
 import React, { useState, useEffect } from 'react';
 import './DataTable.css';
 
+function filterMessageThread(messageThread) {
+  if (!messageThread) return '';
+  const lines = messageThread.split(/\n|---/);
+  const boilerplatePatterns = [
+    /^[A-Z ]+RATED THEIR STAY \d STARS!?$/i,
+    /to find tips and tricks from hosts around the world/i,
+    /had great things to say about their stay/i,
+    /read on for a snapshot/i,
+    /now that you and your guest have both written reviews/i,
+    /we've posted them to your airbnb profiles/i,
+    /keep hosting 5-star stays/i,
+    /get more 5-star reviews/i,
+    /add details guests will love/i,
+    /connect with other hosts/i,
+    /visit the airbnb community center/i,
+    /airbnb, inc\./i,
+    /10 min read/i,
+    /6 min read/i,
+  ];
+  const filtered = lines
+    .map(line => line.trim())
+    .filter(line =>
+      line.length > 0 &&
+      !boilerplatePatterns.some(pattern => pattern.test(line))
+    );
+  return filtered.join(' ');
+}
+
 const DataTable = ({ data }) => {
   const [filteredData, setFilteredData] = useState([]);
   const [currentPage, setCurrentPage] = useState(() => Number(localStorage.getItem('currentPage')) || 1);
   const [itemsPerPage] = useState(10);
-  const [viewMode, setViewMode] = useState(() => localStorage.getItem('viewMode') || 'table'); // 'table', 'bubble', or 'grouped'
+  const [viewMode, setViewMode] = useState(() => localStorage.getItem('viewMode') || 'table');
   const [showOnlyPositiveWithSuggestion, setShowOnlyPositiveWithSuggestion] = useState(() => localStorage.getItem('showOnlyPositiveWithSuggestion') === 'true');
+  const [searchQuery, setSearchQuery] = useState('');
 
   useEffect(() => {
     if (data && data.length > 0) {
-      // Sort: has_suggestion true first
       const sorted = [...data].sort((a, b) => (b.has_suggestion === true) - (a.has_suggestion === true));
-      // Filter data to show only rows where all key fields are present
       const keyFields = ['customer_name', 'rating', 'place', 'review_text', 'dates'];
-      const filtered = sorted.filter(row => {
-        return keyFields.every(field => {
+      const filtered = sorted.filter(row =>
+        keyFields.every(field => {
           const value = row[field];
-          return value !== null && value !== undefined && value !== '' && value.toString().trim() !== '';
-        });
+          return value !== null && value !== undefined && value.toString().trim() !== '';
+        })
+      );
+
+      // Apply search filter
+      const searched = filtered.filter(row => {
+        const combinedValues = [
+          row.customer_name,
+          row.subject,
+          row.place,
+          row.review_text,
+          row.message_thread,
+        ]
+          .join(' ')
+          .toLowerCase();
+        return combinedValues.includes(searchQuery.toLowerCase());
       });
-      setFilteredData(filtered);
-      setCurrentPage(1); // Reset to first page when data changes
+
+      setFilteredData(searched);
+      setCurrentPage(1);
     } else {
       setFilteredData([]);
     }
-  }, [data]);
+  }, [data, searchQuery]);
 
-  // Calculate pagination
   const indexOfLastItem = currentPage * itemsPerPage;
   const indexOfFirstItem = indexOfLastItem - itemsPerPage;
-  // Sort filteredData so that has_suggestion true comes first, then paginate
   const sortedFilteredData = [...filteredData].sort((a, b) => (b.has_suggestion === true) - (a.has_suggestion === true));
   const currentItems = sortedFilteredData.slice(indexOfFirstItem, indexOfLastItem);
   const totalPages = Math.ceil(filteredData.length / itemsPerPage);
@@ -39,22 +79,19 @@ const DataTable = ({ data }) => {
     setCurrentPage(pageNumber);
   };
 
-  // Rating-based color functions
   const getBubbleColor = (rating) => {
     const num = parseInt(rating);
-    if (num >= 5) return '#4CAF50'; // Bright green for 5-star
-    if (num >= 4) return '#8BC34A'; // Light green for 4-star
-    if (num >= 3) return '#FFC107'; // Yellow for 3-star
-    if (num >= 2) return '#FF9800'; // Orange for 2-star
-    return '#F44336'; // Red for 1-star
+    if (num >= 5) return '#4CAF50';
+    if (num >= 4) return '#8BC34A';
+    if (num >= 3) return '#FFC107';
+    if (num >= 2) return '#FF9800';
+    return '#F44336';
   };
 
   const getBubbleTextColor = (rating) => {
-    const num = parseInt(rating);
-    return num >= 3 ? '#ffffff' : '#ffffff'; // White text for contrast
+    return '#ffffff';
   };
 
-  // Group reviews by customer_name
   const reviewsByCustomer = data.reduce((acc, row) => {
     const name = row.customer_name || 'Unknown';
     if (!acc[name]) acc[name] = [];
@@ -64,15 +101,10 @@ const DataTable = ({ data }) => {
 
   function isReviewByCustomer(review) {
     const link = (review.review_link || '').toLowerCase();
-    // Exclude if the link contains '/hosting/reviews/' and '/edit'
-    if (link.includes('/hosting/reviews/') && link.includes('/edit')) {
-      return false;
-    }
-    return true;
+    return !(link.includes('/hosting/reviews/') && link.includes('/edit'));
   }
 
   useEffect(() => {
-    // Warn before reload/leave
     const handleBeforeUnload = (e) => {
       e.preventDefault();
       e.returnValue = '';
@@ -81,7 +113,6 @@ const DataTable = ({ data }) => {
     return () => window.removeEventListener('beforeunload', handleBeforeUnload);
   }, []);
 
-  // Persist state to localStorage
   useEffect(() => {
     localStorage.setItem('viewMode', viewMode);
   }, [viewMode]);
@@ -99,22 +130,20 @@ const DataTable = ({ data }) => {
   if (filteredData.length === 0) {
     return (
       <div className="no-data">
-        <p>No rows found with all required fields (customer_name, rating, place, review_text, dates).</p>
-        <p>Showing {data.length} total rows, but none have complete information.</p>
+        <p>No rows found with all required fields (customer_name, rating, place, review_text, dates) or search keyword.</p>
+        <p>Showing {data.length} total rows, but none matched the filter.</p>
       </div>
     );
   }
 
-  // Only show these columns/fields in all views
   const displayColumns = [
     'subject',
-    'date',
     'customer_name',
     'rating',
     'place',
     'review_link',
     'dates',
-    'has_suggestion',
+    'message_thread',
   ];
 
   return (
@@ -144,8 +173,22 @@ const DataTable = ({ data }) => {
           👥 Grouped by Customer
         </button>
       </div>
-      
-      {/* Conditional Rendering based on viewMode */}
+
+      {/* 🔍 Search Input */}
+      <div className="search-bar">
+        <input
+          type="text"
+          placeholder="🔍 Search by customer, subject, place, or review..."
+          value={searchQuery}
+          onChange={(e) => {
+            setSearchQuery(e.target.value);
+            setCurrentPage(1);
+          }}
+          className="search-input"
+        />
+      </div>
+
+      {/* View Logic */}
       {viewMode === 'grouped' ? (
         <div className="grouped-reviews">
           {Object.entries(reviewsByCustomer)
@@ -159,7 +202,7 @@ const DataTable = ({ data }) => {
                     .map((review, idx) => (
                       <li key={idx}>
                         {displayColumns.map((column) => {
-                          if (column === 'customer_name') return null; // Already shown as group header
+                          if (column === 'customer_name') return null;
                           if (column === 'review_link' && review[column]) {
                             return (
                               <span key={column} style={{ marginLeft: 8 }}>
@@ -221,9 +264,11 @@ const DataTable = ({ data }) => {
                           )
                         : column === 'has_suggestion'
                           ? (row[column] ? 'Yes' : 'No')
-                          : (row[column] !== null && row[column] !== undefined 
-                              ? row[column].toString() 
-                              : '')}
+                          : (column === 'message_thread' && row[column] !== null && row[column] !== undefined
+                              ? filterMessageThread(row[column])
+                              : (row[column] !== null && row[column] !== undefined 
+                                  ? row[column].toString() 
+                                  : ''))}
                     </td>
                   ))}
                 </tr>
@@ -248,7 +293,7 @@ const DataTable = ({ data }) => {
               </div>
               <div className="bubble-content">
                 {displayColumns.map((column) => {
-                  if (column === 'customer_name' || column === 'rating') return null; // Already shown in header
+                  if (column === 'customer_name' || column === 'rating') return null;
                   if (column === 'review_link' && row[column]) {
                     return (
                       <p key={column}>
@@ -270,7 +315,7 @@ const DataTable = ({ data }) => {
                     );
                   }
                   return row[column] ? (
-                    <p key={column}><strong>{column.charAt(0).toUpperCase() + column.slice(1)}:</strong> {row[column]}</p>
+                    <p key={column}><strong>{column.charAt(0).toUpperCase() + column.slice(1)}:</strong> {column === 'message_thread' ? filterMessageThread(row[column]) : row[column]}</p>
                   ) : null;
                 })}
               </div>
