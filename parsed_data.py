@@ -388,28 +388,31 @@ def parse_mbox(file_path):
                 body = str(msg.get_payload())
         records.append({'subject': subject, 'from': from_, 'to': to, 'date': date, 'body': body})
     return pd.DataFrame(records)
-
+""" Add Thread Message and extract all threads with customer messages """
 def extract_customer_info(subject, body):
-    """Extract customer name, rating, place, review text, messages sent, dates, and review link from email content."""
+    """Extract customer name, rating, place, review text, messages sent, dates, review link, and thread link from email content."""
     info = {
         'customer_name': None,
         'rating': None,
         'place': None,
         'review_text': None,
         'dates': None,
-        'message_sent': None,
-        'review_link': None
+        'message_thread': None,
+        'review_link': None,
+        'message_link': None,  # NEW FIELD
+        'thread_link': None  # NEW FIELD
     }
+
     # Extract customer name from subject
     name_match = re.search(r'(\w+)\s+wrote\s+you\s+a\s+review', subject or '', re.IGNORECASE)
     if name_match:
         info['customer_name'] = name_match.group(1)
     else:
-        # Try another pattern (e.g., "Kati left a 5-star review!")
         name_match2 = re.search(r'(\w+)\s+left\s+a\s+\d+-star\s+review', subject or '', re.IGNORECASE)
         if name_match2:
             info['customer_name'] = name_match2.group(1)
-    # Extract rating (e.g., "5-star review" or "RATED THEIR STAY 5 STARS")
+
+    # Extract rating
     rating_match = re.search(r'(\d+)-star\s+review', body or '', re.IGNORECASE)
     if rating_match:
         info['rating'] = rating_match.group(1)
@@ -417,30 +420,30 @@ def extract_customer_info(subject, body):
         rating_match2 = re.search(r'RATED THEIR STAY (\d+) STARS', body or '', re.IGNORECASE)
         if rating_match2:
             info['rating'] = rating_match2.group(1)
+
     # Extract place name (in quotes)
     place_match = re.search(r'"([^"]+)"', body or '')
     if place_match:
         info['place'] = place_match.group(1)
-    # Extract review text from a variety of patterns
+
+    # Extract review text (unchanged)
     review_patterns = [
-        r'Booker\s*(?:=20)?\s*\n+([\s\S]+)',  # Fully greedy, capture everything after Booker
-        r'OVERALL RATING\s*\d+\s*\n([^\n]+)',   # review on next line after rating
-        r'OVERALL RATING \d+\s*([^\n]+)',       # review on same line
-        r'(?<=\n\n)[^"\n]{5,}\n*$',             # last paragraph (if it's not quoted, fallback)
-        r'review(?:\s*text)?[:\-\s]+"?([^\n"]+)"?',  # e.g., Review: "Great place!"
-        r'comment[:\-\s]+"?([^\n"]+)"?',             # e.g., Comment: "Nice host"
-        r'(?:review|feedback|comment)[^\n]*\n([^\n]{10,})', # text after keyword
-        r'FEEDBACK FROM THEIR STAY.*?"([^\"]+)"',  # fallback: property name, not review
-        r'"([^\"]{10,})"',                        # any quoted text longer than 10 chars
+        r'Booker\s*(?:=20)?\s*\n+([\s\S]+)',
+        r'OVERALL RATING\s*\d+\s*\n([^\n]+)',
+        r'OVERALL RATING \d+\s*([^\n]+)',
+        r'(?<=\n\n)[^"\n]{5,}\n*$',
+        r'review(?:\s*text)?[:\-\s]+"?([^\n"]+)"?',
+        r'comment[:\-\s]+"?([^\n"]+)"?',
+        r'(?:review|feedback|comment)[^\n]*\n([^\n]{10,})',
+        r'FEEDBACK FROM THEIR STAY.*?"([^\"]+)",',
+        r'"([^\"]{10,})"',
     ]
     review_text = None
     for pat in review_patterns:
         match = re.search(pat, body or '', re.IGNORECASE | re.DOTALL)
         if match:
             review_block = match.group(1).strip()
-            # Split into lines
             lines = [line.strip() for line in review_block.splitlines()]
-            # Skip empty lines and lines that are just '=20'
             review_lines = []
             started = False
             for line in lines:
@@ -450,53 +453,117 @@ def extract_customer_info(subject, body):
                         review_lines.append(line)
                 else:
                     if not line or line == '=20':
-                        break  # Stop at first blank or encoding line after review starts
+                        break
                     review_lines.append(line)
             review_text = ' '.join(review_lines).strip()
-            # Remove translation note if present
             if 'Automatically translated from original message' in review_text:
                 review_text = review_text.split('Automatically translated from original message')[0].strip()
             break
-    # Fallback: largest quoted text
     if not review_text:
-        quoted_texts = re.findall(r'"([^"]{10,})"', body or '', re.DOTALL)
+        quoted_texts = re.findall(r'"([^\"]{10,})"', body or '', re.DOTALL)
         if quoted_texts:
             review_text = max(quoted_texts, key=len)
-    # Fallback: largest paragraph
     if not review_text and body:
         paragraphs = [p.strip() for p in (body or '').split('\n\n') if len(p.strip()) > 10]
         if paragraphs:
             review_text = max(paragraphs, key=len)
     info['review_text'] = review_text
-    # Extract the first paragraph or main block of text as the message
-    def extract_main_message(body):
+
+    # --- Enhanced message_thread extraction using regex ---
+    def extract_genuine_customer_messages(body):
         if not body:
             return None
-        paragraphs = [p.strip() for p in body.split('\n\n') if p.strip()]
-        if paragraphs:
-            for para in paragraphs:
-                if not para.lower().startswith((
-                    'best,', 'thanks,', 'regards,', 'sent from', 'on ', 'from:', '--', 'cheers', 'sincerely', 'yours', 'thank you', 'kind regards', 'warm regards', 'with appreciation', 'with gratitude', 'respectfully', 'faithfully', 'truly', 'appreciatively', 'cordially', 'love', 'take care', 'see you', 'goodbye', 'bye', 'ps', 'p.s.'
-                )) and len(para) > 10:
-                    return para
-            return paragraphs[0]  # fallback: first paragraph
-        return None
-    info['message_sent'] = extract_main_message(body)
-    # Extract dates (e.g., "Jun 10 – 12" or "Jun 13 – 14, 2025")
+        # Split on double newlines or reply markers
+        blocks = re.split(r'(?:\n\s*\n|^On .+wrote:|^From:|^Sent:|^To:|^Subject:|^Date:)', body, flags=re.MULTILINE)
+        boilerplate_patterns = [
+            r'^[A-Za-z]+ had great things to say about their stay[—-]read on for a snapshot of what they loved most\. Now that you and your guest have both written reviews, we\'ve posted them to your Airbnb profiles\.\s*-*',
+            r'read on for a snapshot',
+            r'keep hosting 5-star stays',
+            r'get more 5-star reviews',
+            r'add details guests will love',
+            r'connect with other hosts',
+            r'visit the airbnb community center',
+            r'airbnb, inc\.',
+            r'888 brannan st',
+            r'san francisco, ca',
+            r'write a response',
+            r'overlook lux dome',
+            r'looked like the photos',
+            r'proactive',
+            r'peaceful',
+            r'special thanks',
+            r'now that you and your guest have both written reviews',
+            r'we\'ve posted them to your airbnb profiles',
+            r'https://',  # Any block that's just a link
+            r'facebook.com/airbnb',
+            r'instagram.com/airbnb',
+            r'twitter.com/airbnb',
+            r'10 min read',
+            r'6 min read',
+            r'\%opentrack\%',
+        ]
+        boilerplate_re = re.compile('|'.join(boilerplate_patterns), re.IGNORECASE)
+        customer_messages = []
+        boilerplate_phrase_re = re.compile(
+            r'^[A-Za-z]+ had great things to say about their stay[—-]read on for a snapshot of what they loved most\. Now that you and your guest have both written reviews, we\'ve posted them to your Airbnb profiles\.\s*-*',
+            re.IGNORECASE
+        )
+        for block in blocks:
+            block = block.strip()
+            # Remove boilerplate phrase if present at the start
+            block = boilerplate_phrase_re.sub('', block).strip()
+            # If the split phrase is present, keep only the text after it
+            split_phrase = "Now that you and your guest have both written reviews, we've posted them to your Airbnb profiles."
+            if split_phrase in block:
+                block = block.split(split_phrase, 1)[1].lstrip(' -–—')
+            # Further split on dashes and newlines, remove boilerplate sub-blocks
+            sub_blocks = re.split(r'(?:\n---|\n)', block)
+            cleaned_sub_blocks = []
+            for sub in sub_blocks:
+                sub = sub.strip()
+                # Remove if matches any boilerplate pattern
+                if not sub or boilerplate_re.search(sub):
+                    continue
+                # Remove if matches 'RATED THEIR STAY' phrase
+                if re.match(r'^[A-Z ]+RATED THEIR STAY \d STARS!?$', sub, re.IGNORECASE):
+                    continue
+                cleaned_sub_blocks.append(sub)
+            block = ' '.join(cleaned_sub_blocks).strip()
+            # Heuristics for a genuine message
+            if (
+                len(block) > 30 and
+                not boilerplate_re.search(block) and
+                not re.match(r'^(on |from:|sent:|to:|subject:|date:|>|---|--|regards,|best,|cheers|thank you|sincerely|kind regards|warm regards|with appreciation|with gratitude|respectfully|faithfully|truly|appreciatively|cordially|love|take care|see you|goodbye|bye|ps|p.s.)', block, re.IGNORECASE) and
+                not re.match(r'^https?://', block) and
+                re.search(r'[.!?]', block)  # At least one sentence-ending punctuation
+            ):
+                customer_messages.append(block)
+        # If no genuine messages, try to extract a message thread URL
+        if not customer_messages:
+            urls = re.findall(r'https://www\.airbnb\.com/messages/thread/\d+', body or '')
+            if urls:
+                return [urls[0]]  # Return the first thread URL as the message_thread
+        return customer_messages if customer_messages else None
+    thread = extract_genuine_customer_messages(body)
+    info['message_thread'] = '\n\n---\n\n'.join(thread) if thread else None
+
+    # Extract dates (e.g., Jun 10 – 12)
     date_match = re.search(r'(\w+\s+\d+\s*[–-]\s*\d+(?:,\s*\d{4})?)', body or '')
     if date_match:
         info['dates'] = date_match.group(1)
-    # Extract review link (prefer links containing 'review' or 'reviews')
+
+    # Extract review link (fixed: use first 'review' URL)
     urls = re.findall(r'https?://\S+', body or '')
     review_link = None
     if urls:
         for url in urls:
             if 'review' in url.lower():
                 review_link = url
-                break
+                break  # Use the first match only
         if not review_link:
-            review_link = urls[0]  # fallback to first URL
+            review_link = urls[0]
     info['review_link'] = review_link
+    # Do NOT set info['message_link']
     return info
 
 def enhance_mbox_data(df):
@@ -506,8 +573,9 @@ def enhance_mbox_data(df):
     df['place'] = None
     df['review_text'] = None
     df['dates'] = None
-    df['message_sent'] = None
+    df['message_thread'] = None
     df['review_link'] = None
+    # Do NOT set df['message_link']
     for idx, row in df.iterrows():
         info = extract_customer_info(row.get('subject', ''), row.get('body', ''))
         df.at[idx, 'customer_name'] = info['customer_name']
@@ -515,7 +583,7 @@ def enhance_mbox_data(df):
         df.at[idx, 'place'] = info['place']
         df.at[idx, 'review_text'] = info['review_text']
         df.at[idx, 'dates'] = info['dates']
-        df.at[idx, 'message_sent'] = info['message_sent']
+        df.at[idx, 'message_thread'] = info['message_thread']
         df.at[idx, 'review_link'] = info['review_link']
     return df
 
@@ -593,7 +661,7 @@ def api_data():
                         return True
             return False
         df['has_suggestion'] = df.apply(has_suggestion, axis=1)
-        columns_of_interest = ['from', 'to', 'subject', 'date', 'body', 'customer_name', 'review', 'message', 'rating', 'place', 'review_text', 'review_link', 'dates', 'keywords', 'has_suggestion']
+        columns_of_interest = ['from', 'to', 'subject', 'date', 'body', 'customer_name', 'review', 'message', 'rating', 'place', 'review_text', 'review_link', 'dates', 'keywords', 'has_suggestion', 'message_thread']
         available = [col for col in columns_of_interest if col in df.columns]
         if available:
             df = df[available]
@@ -648,7 +716,7 @@ def upload_file():
                         return True
             return False
         df['has_suggestion'] = df.apply(has_suggestion, axis=1)
-        columns_of_interest = ['from', 'to', 'subject', 'date', 'body', 'customer_name', 'review', 'message', 'rating', 'place', 'review_text', 'review_link', 'dates', 'keywords', 'has_suggestion']
+        columns_of_interest = ['from', 'to', 'subject', 'date', 'body', 'customer_name', 'review', 'message', 'rating', 'place', 'review_text', 'review_link', 'dates', 'keywords', 'has_suggestion', 'message_thread']
         available = [col for col in columns_of_interest if col in df.columns]
         if available:
             df = df[available]
