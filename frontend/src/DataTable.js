@@ -82,7 +82,6 @@ const DataTable = ({ data }) => {
     'place',
     'review_link',
     'dates',
-    'message_thread',
   ];
 
   return (

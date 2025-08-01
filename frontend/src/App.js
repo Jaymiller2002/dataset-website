@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import DataTable from './DataTable';
+import './App.css';
 
 function App() {
   const [data, setData] = useState([]);
@@ -35,18 +36,24 @@ function App() {
   };
 
   return (
-    <div style={{padding: 24, textAlign: 'center'}}>
+    <div className="App">
       <h1>Parsed Dataset Viewer</h1>
-      <div style={{marginBottom: 20}}>
+      
+      <div className="file-upload-container">
         <input 
           type="file" 
+          id="file-input"
           onChange={handleFileChange}
           accept=".csv,.xlsx,.xls,.json,.parquet,.pkl,.pickle,.mbox"
+          className="file-input"
         />
+        <label htmlFor="file-input" className="file-input-label">
+          📁 Choose File to Upload
+        </label>
       </div>
       
-      {loading && <div>Loading...</div>}
-      {error && <div style={{color: 'red', marginBottom: 20}}>Error: {error}</div>}
+      {loading && <div className="loading"> Loading and processing your data...</div>}
+      {error && <div className="error">❌ Error: {error}</div>}
       
       <DataTable data={data} />
     </div>
