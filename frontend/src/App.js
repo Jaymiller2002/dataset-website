@@ -19,7 +19,7 @@ function App() {
     formData.append('file', file);
 
     try {
-      const res = await fetch(`${process.env.REACT_APP_API_URL || 'https://dataset-website.onrender.com/'}/api/upload`, {
+      const res = await fetch(`${process.env.REACT_APP_API_URL || 'https://dataset-website.onrender.com'}/api/upload`, {
         method: 'POST',
         body: formData,
       });
