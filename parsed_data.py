@@ -617,6 +617,10 @@ def extract_keywords_per_review(df, text_column='body', lan='en', n=2, top=5):
 app = Flask(__name__)
 CORS(app)
 
+@app.route('/', methods=['GET'])
+def health_check():
+    return jsonify({'status': 'ok', 'message': 'Flask API is running'})
+
 @app.route('/api/data', methods=['GET'])
 def api_data():
     file_path = request.args.get('file')
