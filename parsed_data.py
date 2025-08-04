@@ -615,7 +615,7 @@ def extract_keywords_per_review(df, text_column='body', lan='en', n=2, top=5):
 
 # --- Flask API for React frontend ---
 app = Flask(__name__)
-CORS(app)
+CORS(app, origins=['https://dataset-website.vercel.app', 'http://localhost:3000'])
 
 @app.route('/', methods=['GET'])
 def health_check():
