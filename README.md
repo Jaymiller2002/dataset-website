@@ -299,3 +299,5 @@ This project is open source and available under the MIT License.
 3. Make your changes
 4. Test thoroughly
 5. Submit a pull request
+
+Loved making this project cause it challenged me to learn new things and it's a pretty niche build
