@@ -725,7 +725,7 @@ def api_data():
         
         # For general CSV files, don't filter columns - show all data
         # Only filter for email/mbox files which have specific expected columns
-        if file.filename.lower().endswith('.mbox'):
+        if file_path.lower().endswith('.mbox'):
             columns_of_interest = ['from', 'to', 'subject', 'date', 'body', 'customer_name', 'review', 'message', 'rating', 'place', 'review_text', 'review_link', 'dates', 'keywords', 'has_suggestion', 'message_thread']
             available = [col for col in columns_of_interest if col in df.columns]
             if available:
