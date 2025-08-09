@@ -260,19 +260,7 @@ def parse_data(
     
     try:
         if file_type.lower() == 'csv':
-            # Try with specified encoding first
-            try:
-                return pd.read_csv(file_path, encoding=encoding, **kwargs)
-            except UnicodeDecodeError:
-                # If encoding fails, try common encodings
-                encodings_to_try = ['utf-8', 'latin-1', 'cp1252', 'iso-8859-1']
-                for enc in encodings_to_try:
-                    try:
-                        return pd.read_csv(file_path, encoding=enc, **kwargs)
-                    except UnicodeDecodeError:
-                        continue
-                # If all encodings fail, try with error handling
-                return pd.read_csv(file_path, encoding='utf-8', errors='replace', **kwargs)
+            return pd.read_csv(file_path, encoding=encoding, **kwargs)
         
         elif file_type.lower() == 'excel':
             return pd.read_excel(file_path, **kwargs)
@@ -617,19 +605,11 @@ def extract_global_keywords(df, text_column='body', lan='en', n=2, top=20):
     return keywords
 
 def extract_keywords_per_review(df, text_column='body', lan='en', n=2, top=5):
-    # Check if the text column exists
-    if text_column not in df.columns:
-        df['keywords'] = [[] for _ in range(len(df))]
-        return df
-    
     kw_extractor = yake.KeywordExtractor(lan=lan, n=n, top=top)
     def extract(text):
         if not text or not isinstance(text, str):
             return []
-        try:
-            return [kw for kw, score in kw_extractor.extract_keywords(text)]
-        except Exception:
-            return []
+        return [kw for kw, score in kw_extractor.extract_keywords(text)]
     df['keywords'] = df[text_column].apply(extract)
     return df
 
@@ -655,53 +635,16 @@ def api_data():
             df = extract_keywords_per_review(df, text_column='review_text')
         else:
             df = parse_data(file_path)
-            # Find the best text column for keyword extraction
-            text_columns = ['body', 'text', 'message', 'content', 'review', 'description', 'comment']
-            text_col = None
-            for col in text_columns:
-                if col in df.columns:
-                    text_col = col
-                    break
-            
-            # If no standard text column found, use the first string column with substantial content
-            if not text_col:
-                for col in df.columns:
-                    if df[col].dtype == 'object':  # String-like column
-                        # Check if this column has substantial text content
-                        sample_text = df[col].dropna().astype(str).str.len()
-                        if len(sample_text) > 0 and sample_text.mean() > 10:  # Average length > 10 chars
-                            text_col = col
-                            break
-            
-            # Only extract keywords if we found a suitable text column
-            if text_col:
-                df = extract_keywords_per_review(df, text_column=text_col)
+            df = extract_keywords_per_review(df, text_column='body')
         # Improved has_suggestion logic
         import re
         def has_suggestion(row):
             try:
-                # Try to find a rating column with various possible names
-                rating = 0
-                rating_cols = ['rating', 'score', 'stars', 'rate']
-                for col in rating_cols:
-                    if col in row and row.get(col) is not None:
-                        try:
-                            rating = float(row.get(col, 0))
-                            break
-                        except Exception:
-                            continue
+                rating = float(row.get('rating', 0))
             except Exception:
                 rating = 0
-            
-            # Try to find text content from various possible columns
-            text = ''
-            text_cols = ['review_text', 'body', 'text', 'message', 'content', 'review', 'description', 'comment']
-            for col in text_cols:
-                if col in row and row.get(col):
-                    text = str(row.get(col, '')).lower()
-                    break
-            
-            if rating >= 4 and text:
+            text = (row.get('review_text') or row.get('body') or '').lower()
+            if rating >= 4:
                 # Exclude negations
                 if re.search(r'no (issues?|problems?)', text):
                     return False
@@ -722,14 +665,10 @@ def api_data():
                         return True
             return False
         df['has_suggestion'] = df.apply(has_suggestion, axis=1)
-        
-        # For general CSV files, don't filter columns - show all data
-        # Only filter for email/mbox files which have specific expected columns
-        if file_path.lower().endswith('.mbox'):
-            columns_of_interest = ['from', 'to', 'subject', 'date', 'body', 'customer_name', 'review', 'message', 'rating', 'place', 'review_text', 'review_link', 'dates', 'keywords', 'has_suggestion', 'message_thread']
-            available = [col for col in columns_of_interest if col in df.columns]
-            if available:
-                df = df[available]
+        columns_of_interest = ['from', 'to', 'subject', 'date', 'body', 'customer_name', 'review', 'message', 'rating', 'place', 'review_text', 'review_link', 'dates', 'keywords', 'has_suggestion', 'message_thread']
+        available = [col for col in columns_of_interest if col in df.columns]
+        if available:
+            df = df[available]
         return df.to_json(orient='records')
     except Exception as e:
         return jsonify({'error': str(e)}), 500
@@ -751,53 +690,16 @@ def upload_file():
             df = extract_keywords_per_review(df, text_column='review_text')
         else:
             df = parse_data(tmp_path)
-            # Find the best text column for keyword extraction
-            text_columns = ['body', 'text', 'message', 'content', 'review', 'description', 'comment']
-            text_col = None
-            for col in text_columns:
-                if col in df.columns:
-                    text_col = col
-                    break
-            
-            # If no standard text column found, use the first string column with substantial content
-            if not text_col:
-                for col in df.columns:
-                    if df[col].dtype == 'object':  # String-like column
-                        # Check if this column has substantial text content
-                        sample_text = df[col].dropna().astype(str).str.len()
-                        if len(sample_text) > 0 and sample_text.mean() > 10:  # Average length > 10 chars
-                            text_col = col
-                            break
-            
-            # Only extract keywords if we found a suitable text column
-            if text_col:
-                df = extract_keywords_per_review(df, text_column=text_col)
+            df = extract_keywords_per_review(df, text_column='body')
         # Improved has_suggestion logic
         import re
         def has_suggestion(row):
             try:
-                # Try to find a rating column with various possible names
-                rating = 0
-                rating_cols = ['rating', 'score', 'stars', 'rate']
-                for col in rating_cols:
-                    if col in row and row.get(col) is not None:
-                        try:
-                            rating = float(row.get(col, 0))
-                            break
-                        except Exception:
-                            continue
+                rating = float(row.get('rating', 0))
             except Exception:
                 rating = 0
-            
-            # Try to find text content from various possible columns
-            text = ''
-            text_cols = ['review_text', 'body', 'text', 'message', 'content', 'review', 'description', 'comment']
-            for col in text_cols:
-                if col in row and row.get(col):
-                    text = str(row.get(col, '')).lower()
-                    break
-            
-            if rating >= 4 and text:
+            text = (row.get('review_text') or row.get('body') or '').lower()
+            if rating >= 4:
                 # Exclude negations
                 if re.search(r'no (issues?|problems?)', text):
                     return False
@@ -818,14 +720,10 @@ def upload_file():
                         return True
             return False
         df['has_suggestion'] = df.apply(has_suggestion, axis=1)
-        
-        # For general CSV files, don't filter columns - show all data
-        # Only filter for email/mbox files which have specific expected columns
-        if file_path.lower().endswith('.mbox'):
-            columns_of_interest = ['from', 'to', 'subject', 'date', 'body', 'customer_name', 'review', 'message', 'rating', 'place', 'review_text', 'review_link', 'dates', 'keywords', 'has_suggestion', 'message_thread']
-            available = [col for col in columns_of_interest if col in df.columns]
-            if available:
-                df = df[available]
+        columns_of_interest = ['from', 'to', 'subject', 'date', 'body', 'customer_name', 'review', 'message', 'rating', 'place', 'review_text', 'review_link', 'dates', 'keywords', 'has_suggestion', 'message_thread']
+        available = [col for col in columns_of_interest if col in df.columns]
+        if available:
+            df = df[available]
         return df.to_json(orient='records')
     except Exception as e:
         return jsonify({'error': str(e)}), 500
