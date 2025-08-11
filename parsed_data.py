@@ -629,22 +629,82 @@ def api_data():
     if not os.path.exists(file_path):
         return jsonify({'error': f'File not found: {file_path}'}), 404
     try:
-        if file_path.lower().endswith('.mbox'):
+        # Detect file type for conditional processing
+        file_extension = file_path.lower().split('.')[-1] if '.' in file_path else ''
+        
+        if file_extension == 'mbox':
+            # Keep existing mbox logic exactly as is
             df = parse_mbox(file_path)
             df = enhance_mbox_data(df)
             df = extract_keywords_per_review(df, text_column='review_text')
+            
+        elif file_extension in ['csv', 'xlsx', 'xls', 'json', 'parquet', 'pkl', 'pickle']:
+            # Flexible processing for other file types
+            df = parse_data(file_path)
+            
+            # Smart text column detection
+            text_columns = ['body', 'text', 'message', 'content', 'review', 'description', 'comment']
+            text_col = None
+            for col in text_columns:
+                if col in df.columns:
+                    text_col = col
+                    break
+            
+            # If no standard text column found, use the first string column with substantial content
+            if not text_col:
+                for col in df.columns:
+                    if df[col].dtype == 'object':  # String-like column
+                        # Check if this column has substantial text content
+                        sample_text = df[col].dropna().astype(str).str.len()
+                        if len(sample_text) > 0 and sample_text.mean() > 10:  # Average length > 10 chars
+                            text_col = col
+                            break
+            
+            # Only extract keywords if we found a suitable text column
+            if text_col:
+                df = extract_keywords_per_review(df, text_column=text_col)
+            else:
+                # Add empty keywords column if no suitable text column found
+                df['keywords'] = [[] for _ in range(len(df))]
+                
         else:
+            # Fallback to existing logic for unknown file types
             df = parse_data(file_path)
             df = extract_keywords_per_review(df, text_column='body')
         # Improved has_suggestion logic
         import re
         def has_suggestion(row):
             try:
-                rating = float(row.get('rating', 0))
+                # For mbox files, use existing logic
+                if file_extension == 'mbox':
+                    rating = float(row.get('rating', 0))
+                else:
+                    # For other file types, try multiple rating column names
+                    rating = 0
+                    rating_cols = ['rating', 'score', 'stars', 'rate']
+                    for col in rating_cols:
+                        if col in row and row.get(col) is not None:
+                            try:
+                                rating = float(row.get(col, 0))
+                                break
+                            except Exception:
+                                continue
             except Exception:
                 rating = 0
-            text = (row.get('review_text') or row.get('body') or '').lower()
-            if rating >= 4:
+            
+            # For mbox files, use existing logic
+            if file_extension == 'mbox':
+                text = (row.get('review_text') or row.get('body') or '').lower()
+            else:
+                # For other file types, try multiple text column names
+                text = ''
+                text_cols = ['review_text', 'body', 'text', 'message', 'content', 'review', 'description', 'comment']
+                for col in text_cols:
+                    if col in row and row.get(col):
+                        text = str(row.get(col, '')).lower()
+                        break
+            
+            if rating >= 4 and text:
                 # Exclude negations
                 if re.search(r'no (issues?|problems?)', text):
                     return False
@@ -665,10 +725,13 @@ def api_data():
                         return True
             return False
         df['has_suggestion'] = df.apply(has_suggestion, axis=1)
-        columns_of_interest = ['from', 'to', 'subject', 'date', 'body', 'customer_name', 'review', 'message', 'rating', 'place', 'review_text', 'review_link', 'dates', 'keywords', 'has_suggestion', 'message_thread']
-        available = [col for col in columns_of_interest if col in df.columns]
-        if available:
-            df = df[available]
+        
+        # Only filter columns for mbox files (keep all columns for other file types)
+        if file_extension == 'mbox':
+            columns_of_interest = ['from', 'to', 'subject', 'date', 'body', 'customer_name', 'review', 'message', 'rating', 'place', 'review_text', 'review_link', 'dates', 'keywords', 'has_suggestion', 'message_thread']
+            available = [col for col in columns_of_interest if col in df.columns]
+            if available:
+                df = df[available]
         return df.to_json(orient='records')
     except Exception as e:
         return jsonify({'error': str(e)}), 500
@@ -684,22 +747,82 @@ def upload_file():
         file.save(tmp.name)
         tmp_path = tmp.name
     try:
-        if file.filename.lower().endswith('.mbox'):
+        # Detect file type for conditional processing
+        file_extension = file.filename.lower().split('.')[-1] if '.' in file.filename else ''
+        
+        if file_extension == 'mbox':
+            # Keep existing mbox logic exactly as is
             df = parse_mbox(tmp_path)
             df = enhance_mbox_data(df)
             df = extract_keywords_per_review(df, text_column='review_text')
+            
+        elif file_extension in ['csv', 'xlsx', 'xls', 'json', 'parquet', 'pkl', 'pickle']:
+            # Flexible processing for other file types
+            df = parse_data(tmp_path)
+            
+            # Smart text column detection
+            text_columns = ['body', 'text', 'message', 'content', 'review', 'description', 'comment']
+            text_col = None
+            for col in text_columns:
+                if col in df.columns:
+                    text_col = col
+                    break
+            
+            # If no standard text column found, use the first string column with substantial content
+            if not text_col:
+                for col in df.columns:
+                    if df[col].dtype == 'object':  # String-like column
+                        # Check if this column has substantial text content
+                        sample_text = df[col].dropna().astype(str).str.len()
+                        if len(sample_text) > 0 and sample_text.mean() > 10:  # Average length > 10 chars
+                            text_col = col
+                            break
+            
+            # Only extract keywords if we found a suitable text column
+            if text_col:
+                df = extract_keywords_per_review(df, text_column=text_col)
+            else:
+                # Add empty keywords column if no suitable text column found
+                df['keywords'] = [[] for _ in range(len(df))]
+                
         else:
+            # Fallback to existing logic for unknown file types
             df = parse_data(tmp_path)
             df = extract_keywords_per_review(df, text_column='body')
         # Improved has_suggestion logic
         import re
         def has_suggestion(row):
             try:
-                rating = float(row.get('rating', 0))
+                # For mbox files, use existing logic
+                if file_extension == 'mbox':
+                    rating = float(row.get('rating', 0))
+                else:
+                    # For other file types, try multiple rating column names
+                    rating = 0
+                    rating_cols = ['rating', 'score', 'stars', 'rate']
+                    for col in rating_cols:
+                        if col in row and row.get(col) is not None:
+                            try:
+                                rating = float(row.get(col, 0))
+                                break
+                            except Exception:
+                                continue
             except Exception:
                 rating = 0
-            text = (row.get('review_text') or row.get('body') or '').lower()
-            if rating >= 4:
+            
+            # For mbox files, use existing logic
+            if file_extension == 'mbox':
+                text = (row.get('review_text') or row.get('body') or '').lower()
+            else:
+                # For other file types, try multiple text column names
+                text = ''
+                text_cols = ['review_text', 'body', 'text', 'message', 'content', 'review', 'description', 'comment']
+                for col in text_cols:
+                    if col in row and row.get(col):
+                        text = str(row.get(col, '')).lower()
+                        break
+            
+            if rating >= 4 and text:
                 # Exclude negations
                 if re.search(r'no (issues?|problems?)', text):
                     return False
@@ -720,10 +843,13 @@ def upload_file():
                         return True
             return False
         df['has_suggestion'] = df.apply(has_suggestion, axis=1)
-        columns_of_interest = ['from', 'to', 'subject', 'date', 'body', 'customer_name', 'review', 'message', 'rating', 'place', 'review_text', 'review_link', 'dates', 'keywords', 'has_suggestion', 'message_thread']
-        available = [col for col in columns_of_interest if col in df.columns]
-        if available:
-            df = df[available]
+        
+        # Only filter columns for mbox files (keep all columns for other file types)
+        if file_extension == 'mbox':
+            columns_of_interest = ['from', 'to', 'subject', 'date', 'body', 'customer_name', 'review', 'message', 'rating', 'place', 'review_text', 'review_link', 'dates', 'keywords', 'has_suggestion', 'message_thread']
+            available = [col for col in columns_of_interest if col in df.columns]
+            if available:
+                df = df[available]
         return df.to_json(orient='records')
     except Exception as e:
         return jsonify({'error': str(e)}), 500
